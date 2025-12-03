@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Code Assistant Enterprise</title>
+<link rel="stylesheet" href="/static/prism.css">
+<script>
+async function sendTask(task) {
+    const code = document.getElementById("code").value;
+    const targetLang = document.getElementById("targetLang").value;
+
+    const res = await fetch("/api/code", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({code, task, target_lang: targetLang})
+    });
+
+    const data = await res.json();
+    document.getElementById("output").innerHTML = data.result;
+}
+</script>
+</head>
+<body>
+<h1>Code Assistant Enterprise</h1>
+<textarea id="code" rows="20" cols="100" placeholder="Inserisci il codice qui..."></textarea><br><br>
+<select id="targetLang">
+  {% for lang in languages %}
+    <option value="{{lang}}">{{lang}}</option>
+  {% endfor %}
+</select><br><br>
+<button onclick="sendTask('spiegazione')">Spiegazione</button>
+<button onclick="sendTask('traduzione')">Traduzione</button>
+<button onclick="sendTask('fix')">Fix</button>
+<h2>Output:</h2>
+<div id="output" style="white-space: pre-wrap;"></div>
+</body>
+</html>
