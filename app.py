@@ -20,17 +20,23 @@ SUPPORTED_LANGS = ["php","c#","c++","lua","javascript","python","rust","kotlin",
 
 def chunk_code(code, max_lines=MAX_LINES):
     lines = code.split("\n")
-    return ["\n".join(lines[i:i+max_lines]) for i in range(0,len(lines),max_lines)]
+    return ["\n".join(lines[i:i+max_lines]) for i in range(0, len(lines), max_lines)]
 
-def color_code(code, language="python", highlight_lines=None):
+def color_code(code, language="python", fix_lines=None):
     lexer = get_lexer_by_name(language.lower())
-    formatter = HtmlFormatter(linenos=True, cssclass="codehilite")
-    html_code = highlight(code, lexer, formatter)
-    if highlight_lines:
-        for line_no in highlight_lines:
-            html_code = html_code.replace(f'<span class="lineno">{line_no}</span>', 
-                                          f'<span class="lineno" style="background-color:#d4edda">{line_no}</span>')
-    return html_code
+    formatter = HtmlFormatter(nowrap=True)
+    highlighted_code = highlight(code, lexer, formatter)
+
+    if fix_lines:
+        code_lines = highlighted_code.splitlines()
+        for i in fix_lines:
+            if i-1 < len(code_lines):
+                code_lines[i-1] = f'<span class="fix-line">{code_lines[i-1]}</span>'
+        highlighted_code = "\n".join(code_lines)
+
+    # Wrappa in <pre> con classi per line numbers
+    html = f'<pre class="line-numbers language-{language}"><code>{highlighted_code}</code></pre>'
+    return html
 
 def generate_response(task, code, target_lang=None, max_length=1200):
     if code.count('\n') > MAX_LINES:
@@ -48,12 +54,16 @@ def generate_response(task, code, target_lang=None, max_length=1200):
     if task=="spiegazione":
         prompt = f"# Spiega il seguente codice passo passo in maniera chiara\n{code}"
         lang = "python"
+        fix_lines = None
     elif task=="traduzione":
         prompt = f"# Traduci questo codice in {target_lang} mantenendo logica e funzionalità\n{code}"
         lang = target_lang
+        fix_lines = None
     elif task=="fix":
-        prompt = f"# Analizza e correggi errori nel codice seguente. Evidenzia le modifiche in verde\n{code}"
+        prompt = f"# Analizza e correggi errori nel codice seguente. Indica le linee modificate con commento\n{code}"
         lang = "python"
+        # Simuliamo highlight prime 10 righe corrette (in pratica qui potresti fare parsing reale)
+        fix_lines = list(range(1, min(10, len(code.split("\n")))+1))
     else:
         return "Task non valido"
 
@@ -68,8 +78,7 @@ def generate_response(task, code, target_lang=None, max_length=1200):
     )
 
     result_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    highlight_lines = range(1, min(10,len(result_text.split("\n")))+1) if task=="fix" else None
-    html_result = color_code(result_text, lang, highlight_lines)
+    html_result = color_code(result_text, language=lang, fix_lines=fix_lines)
     cache.set(key, html_result)
     return html_result
 
@@ -83,9 +92,10 @@ def code():
     code_text = data.get("code","")
     task = data.get("task","")
     target_lang = data.get("target_lang",None)
+
     result = generate_response(task, code_text, target_lang)
     return jsonify({"result": result})
 
 if __name__=="__main__":
     app.run()
-  
+    
