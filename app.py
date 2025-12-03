@@ -1,22 +1,33 @@
+import os
+import logging
 from flask import Flask, request, jsonify, render_template
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from pygments import highlight
 from pygments.lexers import get_lexer_by_name
 from pygments.formatters import HtmlFormatter
-from cache import SimpleCache
 import difflib
 
 app = Flask(__name__)
 
-model_name = "EleutherAI/gpt-neo-125M"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name)
+# Logging dettagliato
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
-cache = SimpleCache()
 MAX_LINES = 10000
-
 SUPPORTED_LANGS = ["php","c#","c++","lua","javascript","python","rust","kotlin","perl","scala","go"]
 
+# Path modello locale
+MODEL_PATH = "models/distilgpt2"
+if not os.path.exists(MODEL_PATH):
+    os.makedirs(MODEL_PATH)
+
+# Carica modello leggero solo a runtime (CPU-only)
+logging.info("Caricamento modello leggero DistilGPT2...")
+tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
+model = AutoModelForCausalLM.from_pretrained("distilgpt2")
+generator = pipeline("text-generation", model=model, tokenizer=tokenizer, device=-1)
+logging.info("Modello pronto.")
+
+# Funzioni utili
 def chunk_code(code, max_lines=MAX_LINES):
     lines = code.split("\n")
     return ["\n".join(lines[i:i+max_lines]) for i in range(0, len(lines), max_lines)]
@@ -37,73 +48,52 @@ def color_code(code, language="python", fix_lines=None):
     return html
 
 def get_modified_lines(original_code, fixed_code):
-    """
-    Restituisce gli indici delle linee modificate o aggiunte
-    """
     original_lines = original_code.split("\n")
     fixed_lines = fixed_code.split("\n")
     diff = list(difflib.ndiff(original_lines, fixed_lines))
     modified_lines = []
     line_num = 0
     for d in diff:
-        code = d[2:]
         if d.startswith("  "):
             line_num += 1
         elif d.startswith("+ "):
-            modified_lines.append(line_num + 1)  # linea aggiunta/ modificata
+            modified_lines.append(line_num + 1)
             line_num += 1
-        elif d.startswith("- "):
-            # linea rimossa: non incrementiamo line_num
-            continue
     return modified_lines
 
-def generate_response(task, code, target_lang=None, max_length=1200):
+def generate_response(task, code, target_lang=None, max_length=512):
     if code.count('\n') > MAX_LINES:
         return "Errore: codice troppo lungo (>10.000 righe)"
     
     if target_lang and target_lang.lower() not in SUPPORTED_LANGS:
         return f"Linguaggio non supportato: {target_lang}"
 
-    key = cache.hash_input(task, code, target_lang)
-    cached = cache.get(key)
-    if cached:
-        return cached
-
-    # Prompt dinamico
     if task=="spiegazione":
-        prompt = f"# Spiega il seguente codice passo passo in maniera chiara\n{code}"
+        prompt = f"# Spiega passo passo il codice seguente:\n{code}"
         lang = "python"
         fix_lines = None
     elif task=="traduzione":
-        prompt = f"# Traduci questo codice in {target_lang} mantenendo logica e funzionalità\n{code}"
+        prompt = f"# Traduci il codice seguente in {target_lang} mantenendo logica:\n{code}"
         lang = target_lang
         fix_lines = None
     elif task=="fix":
-        prompt = f"# Analizza e correggi errori nel codice seguente\n{code}"
+        prompt = f"# Correggi eventuali errori nel codice seguente:\n{code}"
         lang = "python"
     else:
         return "Task non valido"
 
-    inputs = tokenizer(prompt, return_tensors="pt")
-    outputs = model.generate(
-        **inputs,
-        max_length=max_length,
-        temperature=0.2,
-        do_sample=True,
-        top_p=0.9,
-        top_k=50
-    )
+    logging.info(f"Esecuzione task: {task}, righe codice: {len(code.splitlines())}")
 
-    result_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    # Generazione testo (CPU-only, modello leggero)
+    result = generator(prompt, max_length=max_length, do_sample=False)[0]["generated_text"]
 
     if task=="fix":
-        # calcola linee modificate
-        fix_lines = get_modified_lines(code, result_text)
+        fix_lines = get_modified_lines(code, result)
     else:
         fix_lines = None
 
-    html_result = color_code(result_text, language=lang, fix_lines=fix_lines)
-    cache.set(key, html_result)
+    html_result = color_code(result, language=lang, fix_lines=fix_lines)
+    logging.info("Risposta generata correttamente")
     return html_result
 
 @app.route("/")
@@ -117,9 +107,14 @@ def code():
     task = data.get("task","")
     target_lang = data.get("target_lang",None)
 
-    result = generate_response(code_text=code_text, task=task, target_lang=target_lang)
+    try:
+        result = generate_response(task=task, code=code_text, target_lang=target_lang)
+    except Exception as e:
+        logging.error(f"Errore durante generate_response: {e}")
+        return jsonify({"result": f"Errore interno: {e}"}), 500
+
     return jsonify({"result": result})
 
 if __name__=="__main__":
     app.run()
-        
+    
