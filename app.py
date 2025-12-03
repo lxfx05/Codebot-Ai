@@ -1,24 +1,22 @@
-import os
 import logging
 from flask import Flask, request, jsonify, render_template
-from transformers import AutoTokenizer, pipeline
-import onnxruntime as ort
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from pygments import highlight
 from pygments.lexers import get_lexer_by_name
 from pygments.formatters import HtmlFormatter
 import difflib
 
 app = Flask(__name__)
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logging.basicConfig(level=logging.INFO)
 
 MAX_LINES = 10000
 SUPPORTED_LANGS = ["php","c#","c++","lua","javascript","python","rust","kotlin","perl","scala","go"]
 
-# MODELLO: DistilGPT2 ONNX o Transformers CPU-only
-logging.info("Caricamento tokenizer e pipeline CPU-only...")
+# Singleton modello + tokenizer caricati una volta sola
+logging.info("Caricamento modello leggero...")
 tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
-generator = pipeline("text-generation", model="distilgpt2", device=-1)  # CPU-only
+model = AutoModelForCausalLM.from_pretrained("distilgpt2")
+generator = pipeline("text-generation", model=model, tokenizer=tokenizer, device=-1)
 logging.info("Modello pronto.")
 
 def chunk_code(code, max_lines=MAX_LINES):
