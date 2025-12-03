@@ -1,7 +1,8 @@
 import os
 import logging
 from flask import Flask, request, jsonify, render_template
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from transformers import AutoTokenizer, pipeline
+import onnxruntime as ort
 from pygments import highlight
 from pygments.lexers import get_lexer_by_name
 from pygments.formatters import HtmlFormatter
@@ -9,25 +10,17 @@ import difflib
 
 app = Flask(__name__)
 
-# Logging dettagliato
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 MAX_LINES = 10000
 SUPPORTED_LANGS = ["php","c#","c++","lua","javascript","python","rust","kotlin","perl","scala","go"]
 
-# Path modello locale
-MODEL_PATH = "models/distilgpt2"
-if not os.path.exists(MODEL_PATH):
-    os.makedirs(MODEL_PATH)
-
-# Carica modello leggero solo a runtime (CPU-only)
-logging.info("Caricamento modello leggero DistilGPT2...")
+# MODELLO: DistilGPT2 ONNX o Transformers CPU-only
+logging.info("Caricamento tokenizer e pipeline CPU-only...")
 tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
-model = AutoModelForCausalLM.from_pretrained("distilgpt2")
-generator = pipeline("text-generation", model=model, tokenizer=tokenizer, device=-1)
+generator = pipeline("text-generation", model="distilgpt2", device=-1)  # CPU-only
 logging.info("Modello pronto.")
 
-# Funzioni utili
 def chunk_code(code, max_lines=MAX_LINES):
     lines = code.split("\n")
     return ["\n".join(lines[i:i+max_lines]) for i in range(0, len(lines), max_lines)]
@@ -36,14 +29,12 @@ def color_code(code, language="python", fix_lines=None):
     lexer = get_lexer_by_name(language.lower())
     formatter = HtmlFormatter(nowrap=True)
     highlighted_code = highlight(code, lexer, formatter)
-
     if fix_lines:
         code_lines = highlighted_code.splitlines()
         for i in fix_lines:
             if i-1 < len(code_lines):
                 code_lines[i-1] = f'<span class="fix-line">{code_lines[i-1]}</span>'
         highlighted_code = "\n".join(code_lines)
-
     html = f'<pre class="line-numbers language-{language}"><code>{highlighted_code}</code></pre>'
     return html
 
@@ -83,8 +74,6 @@ def generate_response(task, code, target_lang=None, max_length=512):
         return "Task non valido"
 
     logging.info(f"Esecuzione task: {task}, righe codice: {len(code.splitlines())}")
-
-    # Generazione testo (CPU-only, modello leggero)
     result = generator(prompt, max_length=max_length, do_sample=False)[0]["generated_text"]
 
     if task=="fix":
