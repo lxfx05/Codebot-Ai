@@ -1,6 +1,7 @@
+import os
 import logging
+import requests
 from flask import Flask, request, jsonify, render_template
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 from pygments import highlight
 from pygments.lexers import get_lexer_by_name
 from pygments.formatters import HtmlFormatter
@@ -11,13 +12,10 @@ logging.basicConfig(level=logging.INFO)
 
 MAX_LINES = 10000
 SUPPORTED_LANGS = ["php","c#","c++","lua","javascript","python","rust","kotlin","perl","scala","go"]
+HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
+HUGGINGFACE_URL = "https://api-inference.huggingface.co/models/distilgpt2"
 
-# Singleton modello + tokenizer caricati una volta sola
-logging.info("Caricamento modello leggero...")
-tokenizer = AutoTokenizer.from_pretrained("distilgpt2")
-model = AutoModelForCausalLM.from_pretrained("distilgpt2")
-generator = pipeline("text-generation", model=model, tokenizer=tokenizer, device=-1)
-logging.info("Modello pronto.")
+HEADERS = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
 
 def chunk_code(code, max_lines=MAX_LINES):
     lines = code.split("\n")
@@ -50,10 +48,16 @@ def get_modified_lines(original_code, fixed_code):
             line_num += 1
     return modified_lines
 
-def generate_response(task, code, target_lang=None, max_length=512):
-    if code.count('\n') > MAX_LINES:
+def query_hf_api(prompt, max_length=512):
+    payload = {"inputs": prompt, "parameters": {"max_new_tokens": max_length}}
+    response = requests.post(HUGGINGFACE_URL, headers=HEADERS, json=payload, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+    return data[0]["generated_text"]
+
+def generate_response(task, code, target_lang=None):
+    if code.count("\n") > MAX_LINES:
         return "Errore: codice troppo lungo (>10.000 righe)"
-    
     if target_lang and target_lang.lower() not in SUPPORTED_LANGS:
         return f"Linguaggio non supportato: {target_lang}"
 
@@ -72,7 +76,7 @@ def generate_response(task, code, target_lang=None, max_length=512):
         return "Task non valido"
 
     logging.info(f"Esecuzione task: {task}, righe codice: {len(code.splitlines())}")
-    result = generator(prompt, max_length=max_length, do_sample=False)[0]["generated_text"]
+    result = query_hf_api(prompt)
 
     if task=="fix":
         fix_lines = get_modified_lines(code, result)
