@@ -8,22 +8,26 @@ from pygments.formatters import HtmlFormatter
 import difflib
 from dotenv import load_dotenv
 
-# Carica .env.local in locale
+# Carica variabili da .env.local se esiste
 load_dotenv()
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Configurazione generale
+# Config
 MAX_LINES = 10000
 SUPPORTED_LANGS = ["php","c#","c++","lua","javascript","python","rust","kotlin","perl","scala","go"]
 
-# API HuggingFace
+# HuggingFace API
 HUGGINGFACE_API_KEY = os.environ.get("HUGGINGFACE_API_KEY")
+if not HUGGINGFACE_API_KEY:
+    raise Exception("HUGGINGFACE_API_KEY non impostata!")
+
+# Modello Qwen3-4B-GGUF
 HUGGINGFACE_URL = "https://api-inference.huggingface.co/models/Qwen-3-4B-GGUF"
 HEADERS = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
 
-# Funzioni helper
+# Funzioni utili
 def chunk_code(code, max_lines=MAX_LINES):
     lines = code.split("\n")
     return ["\n".join(lines[i:i+max_lines]) for i in range(0, len(lines), max_lines)]
@@ -38,5 +42,82 @@ def color_code(code, language="python", fix_lines=None):
             if i-1 < len(code_lines):
                 code_lines[i-1] = f'<span class="fix-line">{code_lines[i-1]}</span>'
         highlighted_code = "\n".join(code_lines)
-    html = f'<
+    html = f'<pre class="line-numbers language-{language}"><code>{highlighted_code}</code></pre>'
+    return html
+
+def get_modified_lines(original_code, fixed_code):
+    original_lines = original_code.split("\n")
+    fixed_lines = fixed_code.split("\n")
+    diff = list(difflib.ndiff(original_lines, fixed_lines))
+    modified_lines = []
+    line_num = 0
+    for d in diff:
+        if d.startswith("  "):
+            line_num += 1
+        elif d.startswith("+ "):
+            modified_lines.append(line_num + 1)
+            line_num += 1
+    return modified_lines
+
+def query_hf_api(prompt, max_length=512):
+    payload = {"inputs": prompt, "parameters": {"max_new_tokens": max_length}}
+    response = requests.post(HUGGINGFACE_URL, headers=HEADERS, json=payload, timeout=60)
+    response.raise_for_status()
+    data = response.json()
+    return data[0]["generated_text"]
+
+def generate_response(task, code, target_lang=None):
+    if code.count("\n") > MAX_LINES:
+        return "Errore: codice troppo lungo (>10.000 righe)"
+    if target_lang and target_lang.lower() not in SUPPORTED_LANGS:
+        return f"Linguaggio non supportato: {target_lang}"
+
+    if task=="spiegazione":
+        prompt = f"# Spiega passo passo il codice seguente:\n{code}"
+        lang = "python"
+        fix_lines = None
+    elif task=="traduzione":
+        prompt = f"# Traduci il codice seguente in {target_lang} mantenendo logica:\n{code}"
+        lang = target_lang
+        fix_lines = None
+    elif task=="fix":
+        prompt = f"# Correggi eventuali errori nel codice seguente:\n{code}"
+        lang = "python"
+    else:
+        return "Task non valido"
+
+    logging.info(f"Esecuzione task: {task}, righe codice: {len(code.splitlines())}")
+    result = query_hf_api(prompt)
+
+    if task=="fix":
+        fix_lines = get_modified_lines(code, result)
+    else:
+        fix_lines = None
+
+    html_result = color_code(result, language=lang, fix_lines=fix_lines)
+    logging.info("Risposta generata correttamente")
+    return html_result
+
+# Routes
+@app.route("/")
+def index():
+    return render_template("index.html", languages=SUPPORTED_LANGS)
+
+@app.route("/api/code", methods=["POST"])
+def code():
+    data = request.json
+    code_text = data.get("code","")
+    task = data.get("task","")
+    target_lang = data.get("target_lang",None)
+
+    try:
+        result = generate_response(task=task, code=code_text, target_lang=target_lang)
+    except Exception as e:
+        logging.error(f"Errore durante generate_response: {e}")
+        return jsonify({"result": f"Errore interno: {e}"}), 500
+
+    return jsonify({"result": result})
+
+if __name__=="__main__":
+    app.run()
     
