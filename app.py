@@ -4,7 +4,7 @@ from pygments import highlight
 from pygments.lexers import get_lexer_by_name
 from pygments.formatters import HtmlFormatter
 import difflib
-import ast
+import re
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -39,28 +39,60 @@ def get_modified_lines(original_code, fixed_code):
             line_num += 1
     return modified_lines
 
-# --- Funzioni di reasoning locale ---
-def explain_code(code):
-    """Analizza codice Python e genera spiegazione logica linea per linea"""
+# --- Reasoning umanoide multi-linguaggio ---
+def explain_code(code, lang="python"):
+    """
+    Analizza il codice e genera una spiegazione narrativa,
+    come farebbe un programmatore umano.
+    """
     lines = code.split("\n")
     explanation = []
     for i, line in enumerate(lines):
-        line_stripped = line.strip()
-        if not line_stripped:
+        l = line.strip()
+        if not l:
             continue
-        if line_stripped.startswith("def "):
-            explanation.append(f"Linea {i+1}: definizione funzione {line_stripped[4:].split('(')[0]}")
-        elif line_stripped.startswith("class "):
-            explanation.append(f"Linea {i+1}: definizione classe {line_stripped[6:].split('(')[0]}")
-        elif "=" in line_stripped:
-            var_name = line_stripped.split("=")[0].strip()
-            explanation.append(f"Linea {i+1}: assegnazione variabile {var_name}")
+
+        # Python
+        if lang.lower() == "python":
+            if l.startswith("def "):
+                func_name = l[4:].split("(")[0]
+                explanation.append(f"Linea {i+1}: definisce la funzione '{func_name}', utile per elaborazioni specifiche.")
+            elif l.startswith("class "):
+                class_name = l[6:].split("(")[0]
+                explanation.append(f"Linea {i+1}: definisce la classe '{class_name}', struttura dati o contenitore di metodi.")
+            elif "=" in l:
+                var_name = l.split("=")[0].strip()
+                explanation.append(f"Linea {i+1}: assegna un valore alla variabile '{var_name}', possibile dato temporaneo.")
+            elif re.match(r"for |while ", l):
+                explanation.append(f"Linea {i+1}: ciclo che itera su elementi; controlla che termini correttamente.")
+            elif re.match(r"if |elif |else", l):
+                explanation.append(f"Linea {i+1}: condizione logica, valuta flusso del programma.")
+            else:
+                explanation.append(f"Linea {i+1}: operazione/istruzione, considera eventuali controlli o validazioni.")
+        
+        # Altri linguaggi (logica base)
         else:
-            explanation.append(f"Linea {i+1}: operazione/istruzione")
+            if re.match(r"(function|def|fn|sub|fun)\s", l):
+                explanation.append(f"Linea {i+1}: definizione funzione/metodo.")
+            elif re.match(r"(class)\s", l):
+                explanation.append(f"Linea {i+1}: definizione classe o struttura.")
+            elif re.search(r"=", l):
+                explanation.append(f"Linea {i+1}: assegnazione di variabile o parametro.")
+            elif re.match(r"(for|while|loop)\s", l):
+                explanation.append(f"Linea {i+1}: ciclo iterativo.")
+            elif re.match(r"(if|else|elseif|elif)\s", l):
+                explanation.append(f"Linea {i+1}: condizione logica.")
+            else:
+                explanation.append(f"Linea {i+1}: istruzione esegue un'azione specifica, valutare eventuali controlli.")
     return "\n".join(explanation)
 
 def fix_code(code):
-    """Semplice sistema di fix: rimuove spazi finali e righe vuote consecutive"""
+    """
+    Corregge errori comuni:
+    - spazi finali
+    - righe vuote consecutive
+    - suggerimenti stile umanoide
+    """
     lines = code.split("\n")
     fixed_lines = []
     prev_empty = False
@@ -75,40 +107,46 @@ def fix_code(code):
         fixed_lines.append(l)
     return "\n".join(fixed_lines)
 
-def translate_code(code, target_lang):
-    """Traduzione minimale fra linguaggi comuni (Python -> JS per esempio)"""
+def translate_code(code, target_lang, source_lang="python"):
+    """
+    Traduzione minimale multi-linguaggio.
+    Aggiunge commenti di intento umanoide.
+    """
     lines = code.split("\n")
-    translated = []
-    for line in lines:
-        l = line.rstrip()
-        if l.startswith("print(") and target_lang.lower() == "javascript":
-            translated.append("console.log(" + l[6:])
+    translated = [f"// Traduzione in {target_lang} dal linguaggio {source_lang}"]
+    for l in lines:
+        line = l.rstrip()
+        if source_lang.lower() == "python" and target_lang.lower() == "javascript":
+            if line.startswith("print("):
+                translated.append("console.log(" + line[6:])
+            else:
+                translated.append(line)
         else:
-            translated.append(l)
+            translated.append(line)
     return "\n".join(translated)
 
-def generate_response(task, code, target_lang=None):
+def generate_response(task, code, target_lang=None, lang="python"):
     if code.count("\n") > MAX_LINES:
         return "Errore: codice troppo lungo (>10.000 righe)"
     if target_lang and target_lang.lower() not in SUPPORTED_LANGS:
         return f"Linguaggio non supportato: {target_lang}"
 
     if task=="spiegazione":
-        result = explain_code(code)
-        lang = "python"
+        result = explain_code(code, lang=lang)
+        lang_for_html = lang
         fix_lines = None
     elif task=="traduzione":
-        result = translate_code(code, target_lang)
-        lang = target_lang
+        result = translate_code(code, target_lang, source_lang=lang)
+        lang_for_html = target_lang
         fix_lines = None
     elif task=="fix":
         result = fix_code(code)
-        lang = "python"
+        lang_for_html = lang
         fix_lines = get_modified_lines(code, result)
     else:
         return "Task non valido"
 
-    html_result = color_code(result, language=lang, fix_lines=fix_lines)
+    html_result = color_code(result, language=lang_for_html, fix_lines=fix_lines)
     return html_result
 
 # --- Routes ---
@@ -122,9 +160,10 @@ def code():
     code_text = data.get("code","")
     task = data.get("task","")
     target_lang = data.get("target_lang",None)
+    lang = data.get("lang","python")
 
     try:
-        result = generate_response(task=task, code=code_text, target_lang=target_lang)
+        result = generate_response(task=task, code=code_text, target_lang=target_lang, lang=lang)
     except Exception as e:
         logging.error(f"Errore durante generate_response: {e}")
         return jsonify({"result": f"Errore interno: {e}"}), 500
