@@ -1,43 +1,44 @@
 <!DOCTYPE html>
-<html>
+<html lang="it">
 <head>
-    <meta charset="UTF-8">
-    <title>Code Assistant</title>
-    <link rel="stylesheet" href="/static/prism.css">
-    <style>
-        .fix-line { background-color: #d4f8d4; display:block; }
-        pre { padding:10px; border:1px solid #ccc; border-radius:5px; }
-    </style>
+<meta charset="UTF-8">
+<title>Code Humanizer</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <h1>Code Assistant</h1>
-    <textarea id="code" rows="15" cols="80"></textarea><br>
-    <select id="task">
-        <option value="spiegazione">Spiegazione</option>
-        <option value="traduzione">Traduzione</option>
-        <option value="fix">Fix</option>
-    </select>
-    <select id="lang">
-        <option value="python">Python</option>
-        <option value="javascript">JavaScript</option>
-        <!-- Aggiungi altri linguaggi -->
-    </select>
-    <button onclick="sendCode()">Esegui</button>
-    <div id="result"></div>
+<h1>Code Humanizer - Umanoide</h1>
+<textarea id="codeInput" placeholder="Inserisci codice qui..." rows="15"></textarea>
 
-    <script>
-        async function sendCode() {
-            const code = document.getElementById("code").value;
-            const task = document.getElementById("task").value;
-            const target_lang = document.getElementById("lang").value;
-            const res = await fetch("/api/code", {
-                method:"POST",
-                headers:{"Content-Type":"application/json"},
-                body:JSON.stringify({code, task, target_lang})
-            });
-            const data = await res.json();
-            document.getElementById("result").innerHTML = data.result;
-        }
-    </script>
+<div>
+    <label for="langSelect">Linguaggio:</label>
+    <select id="langSelect">
+        {% for lang in languages %}
+        <option value="{{ lang }}">{{ lang }}</option>
+        {% endfor %}
+    </select>
+</div>
+
+<div>
+    <button onclick="processCode('spiegazione')">Spiegazione</button>
+    <button onclick="processCode('traduzione')">Traduzione</button>
+    <button onclick="processCode('fix')">Fix</button>
+</div>
+
+<div id="result"></div>
+
+<script>
+async function processCode(task){
+    const code = document.getElementById('codeInput').value;
+    const lang = document.getElementById('langSelect').value;
+    const target_lang = task === 'traduzione' ? lang : null;
+    const resp = await fetch('/api/code', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({code, task, target_lang, lang})
+    });
+    const data = await resp.json();
+    document.getElementById('result').innerHTML = data.result;
+}
+</script>
 </body>
 </html>
